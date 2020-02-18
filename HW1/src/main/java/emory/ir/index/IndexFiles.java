@@ -42,8 +42,7 @@ public class IndexFiles {
      * Index all text files under a directory.
      */
     public static void main(String[] args) {
-        String usage = "java org.apache.lucene.demo.IndexFiles"
-                + " [-index INDEX_PATH] [-docs DOCS_PATH] [-update]\n\n"
+        String usage = "Usage: [-index INDEX_PATH] [-docs DOCS_PATH] [-update]\n\n"
                 + "This indexes the documents in DOCS_PATH, creating a Lucene index"
                 + "in INDEX_PATH that can be searched with SearchFiles";
         String indexPath = "index";
@@ -136,9 +135,8 @@ public class IndexFiles {
             return;
         }
 
-        try(InputStream stream = Files.newInputStream(file)) {
+        try(BufferedReader reader = Files.newBufferedReader(file)) {
             // Read each line to identify each document
-            BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
             String line = null;
             while((line = reader.readLine()) != null) {
                 if(line.trim().isEmpty())
