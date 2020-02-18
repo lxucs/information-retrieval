@@ -26,7 +26,6 @@ import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
 
 /**
  * Index all text files under a directory.
@@ -100,14 +99,6 @@ public class IndexFiles {
             IndexWriter writer = new IndexWriter(dir, iwc);
             indexFiles(writer, docDir);
 
-            // NOTE: if you want to maximize search performance,
-            // you can optionally call forceMerge here.  This can be
-            // a terribly costly operation, so generally it's only
-            // worth it when your index is relatively static (ie
-            // you're done adding documents to it):
-            //
-            // writer.forceMerge(1);
-
             writer.close();
 
             Date end = new Date();
@@ -159,6 +150,8 @@ public class IndexFiles {
                     sb.append(line);
                     while(true) {
                         line = reader.readLine();
+                        if(line.contains("<F P=") || line.contains("</F>"))
+                            continue;
                         sb.append(line);
                         if(line.trim().equals("</DOC>")) {
                             // Parse the document
