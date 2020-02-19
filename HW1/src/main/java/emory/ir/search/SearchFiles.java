@@ -85,7 +85,7 @@ public class SearchFiles {
         StringBuilder sb = new StringBuilder();
         for(int i = 0; i < queryList.size(); ++i) {
             Query query = parser.parse(QueryParser.escape(queryList.get(i)));
-            // System.out.println("Searching for: " + query.toString(field));
+            System.out.println("Searching for: " + query.toString(field));
 
             TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);
             printTopDocs(sb, searcher, topDocs, i + 351, userId);
