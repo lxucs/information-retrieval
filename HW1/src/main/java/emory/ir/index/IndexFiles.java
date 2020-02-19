@@ -135,7 +135,7 @@ public class IndexFiles {
             return;
         }
 
-        try(BufferedReader reader = Files.newBufferedReader(file)) {
+        try(BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             // Read each line to identify each document
             String line = null;
             while((line = reader.readLine()) != null) {
@@ -148,7 +148,7 @@ public class IndexFiles {
                     sb.append(line);
                     while(true) {
                         line = reader.readLine();
-                        if(line.contains("<F P=") || line.contains("</F>"))
+                        if(line.contains("<F P=") || line.contains("</F>"))  // Filter out invalid format
                             continue;
                         sb.append(line);
                         if(line.trim().equals("</DOC>")) {
