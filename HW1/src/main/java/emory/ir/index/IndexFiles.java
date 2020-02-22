@@ -2,10 +2,7 @@ package emory.ir.index;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.document.Document;
-import org.apache.lucene.document.Field;
-import org.apache.lucene.document.FieldType;
-import org.apache.lucene.document.StringField;
+import org.apache.lucene.document.*;
 import org.apache.lucene.index.IndexOptions;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -199,15 +196,13 @@ public class IndexFiles {
             return null;
 
         FieldType type = new FieldType();
-
-        type.setStored(true);
+        type.setStored(false);
+        type.setTokenized(true);
         type.setStoreTermVectors(true);
         type.setIndexOptions(IndexOptions.DOCS_AND_FREQS_AND_POSITIONS_AND_OFFSETS);
-
         Field textField = new Field(DocField.TEXT, text, type);
 
         Field docIdField = new StringField(DocField.DOC_NO, docNo, Field.Store.YES);
-        //Field textField = new TextField(DocField.TEXT, text, Field.Store.YES);
 
         doc.add(docIdField);
         doc.add(textField);

@@ -38,6 +38,12 @@
       <artifactId>lucene-queryparser</artifactId>
       <version>8.4.1</version>
     </dependency>
+    <!-- https://mvnrepository.com/artifact/org.apache.lucene/lucene-backward-codecs -->
+    <dependency>
+      <groupId>org.apache.lucene</groupId>
+      <artifactId>lucene-backward-codecs</artifactId>
+      <version>8.4.1</version>
+    </dependency>
 
     <!-- https://mvnrepository.com/artifact/javax.xml.parsers/jaxp-api -->
     <dependency>

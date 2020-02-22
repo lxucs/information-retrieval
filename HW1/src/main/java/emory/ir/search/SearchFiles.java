@@ -8,8 +8,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import emory.ir.LMLaplace;
 import emory.ir.index.DocField;
@@ -22,8 +23,11 @@ import org.apache.lucene.search.*;
 import org.apache.lucene.search.similarities.LMDirichletSimilarity;
 import org.apache.lucene.search.similarities.LMSimilarity;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
 
 public class SearchFiles {
+
+    private static String unkownToken = "#UNKNOWN#";
 
     private SearchFiles() {
     }
@@ -89,9 +93,8 @@ public class SearchFiles {
             System.out.println("Searching for: " + query.toString(field));
 
             TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);
-            // re-rank
-            topDocs = reRank(searcher, reader, query, topDocs);
-            //printTopDocs(sb, searcher, topDocs, i + 351, userId);
+            topDocs.scoreDocs = reRank(reader, query, topDocs, 20, 50);
+            printTopDocs(sb, searcher, topDocs, i + 351, userId);
         }
         reader.close();
 
@@ -101,27 +104,152 @@ public class SearchFiles {
         writer.close();
     }
 
-    public static TopDocs reRank(IndexSearcher searcher,  IndexReader reader, Query query, TopDocs topDocs ) throws Exception{
+    /**
+     * @param k: use top k documents for expansion
+     * @param n: use top n terms for expansion
+     */
+    public static ScoreDoc[] reRank(IndexReader reader, Query query, TopDocs topDocs, int k, int n) throws Exception{
+        boolean debug = true;
 
         ScoreDoc[] hits = topDocs.scoreDocs;
-        for(int i = 0; i < hits.length; ++i) {
+        assert k <= hits.length;
+        String queryText = query.toString();
+        Map<String, HashMap<Integer , Double>> termProbMap = new HashMap<>();  // (term, docId) -> prob
 
-            String docNo = searcher.doc(hits[i].doc).get(DocField.DOC_NO);
-            Terms vec = reader.getTermVector(hits[i].doc, DocField.TEXT);
-            System.out.println("---- ReRANK: " + vec.size());
+        // Build up termProbMap
+        for(int i = 0; i < k; ++i) {
+            Integer docId = hits[i].doc;
+            Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
+            long docLen = termVec.getSumTotalTermFreq();
+            long numUniqueTokens = termVec.size();
 
-            TermsEnum  terms = vec.iterator();
+            TermsEnum terms = termVec.iterator();
+            BytesRef term = null;
+            while((term = terms.next()) != null) {
+                String termText = term.utf8ToString();
+                termProbMap.putIfAbsent(termText, new HashMap<>());
 
-            System.out.println( terms.attributes());
+                PostingsEnum posting = terms.postings(null, PostingsEnum.FREQS);
+                posting.nextDoc();
+                int termFreq = posting.freq();
+                double termProb = (termFreq + 1.0) / (docLen + numUniqueTokens + 1);  // Term Prob
+                termProbMap.get(termText).put(docId, termProb);
+                if(debug)
+                    System.out.println(String.format("term: %s, docLen: %d, numUniqueTokens: %d, termFreq: %d; termProb: %.2f",
+                            termText, docLen, numUniqueTokens, termFreq, termProb));
+            }
+            double unknownTokenProb = 1.0 / (docLen + numUniqueTokens + 1);
+            // Add prob for unknown token for smoothing
+            if(i == 0) {
+                HashMap<Integer, Double> m = new HashMap<>();
+                m.put(docId, unknownTokenProb);
+                termProbMap.put(unkownToken, m);
+            } else
+                termProbMap.get(unkownToken).put(docId, unknownTokenProb);
+        }
+        // Copy for later use
+        Map<String, HashMap<Integer , Double>> termProbMapCopy = termProbMap.entrySet().stream()
+                .collect(Collectors.toMap(e -> e.getKey(), e -> e.getValue()));
 
-            String content = searcher.doc(hits[i].doc).get(DocField.TEXT);
-            System.out.println("Content: " + content);
+        // Calculate p(q|D)
+        String[] queryTerms = queryText.split("\\s+");
+        Map<Integer, Double> queryProbMap = getQueryProbMap(queryTerms, termProbMap, k ,reader, topDocs);
 
-
+        // Re-weight term per document
+        for(int i = 0; i < k; ++i) {
+            Integer docId = hits[i].doc;
+            Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
+            TermsEnum terms = termVec.iterator();
+            BytesRef term = null;
+            while((term = terms.next()) != null) {
+                String termText = term.utf8ToString();
+                double termProb = termProbMap.get(termText).get(docId);
+                double newTermProb = termProb * queryProbMap.get(docId);
+                termProbMap.get(termText).put(docId, newTermProb);
+                if(debug)
+                    System.out.println(String.format("term: %s, newTermProb: %.2f", termText, newTermProb));
+            }
+            double termProb = termProbMap.get(unkownToken).get(docId);
+            double newTermProb = termProb * queryProbMap.get(docId);
+            termProbMap.get(unkownToken).put(docId, newTermProb);
         }
 
-        return topDocs;
+        // Get term prob across documents
+        Map<String, Double> termProbAcrossDocMap = new HashMap<>();
+        termProbMap.forEach((termText, docMap) -> {
+            try {
+                double termProbAcrossDoc = 0;
+                for(int i = 0; i < k; ++i) {
+                    Integer docId = hits[i].doc;
+                    // Use unknown token prob if this query term not exists in current doc
+                    termProbAcrossDoc += docMap.getOrDefault(docId, termProbMap.get(unkownToken).get(docId));
+                }
+                termProbAcrossDocMap.put(termText, termProbAcrossDoc);
+                if(debug)
+                    System.out.println(String.format("term: %s, termProbAcrossDoc: %.2f", termText, termProbAcrossDoc));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+
+        // Normalize termProbAcrossDoc
+        Map<String, Double> normalizedTermProbMap = new HashMap<>();
+        double demoninator = 0;
+        for(double prob: termProbAcrossDocMap.values())
+            demoninator += prob;
+        for(String termText: termProbAcrossDocMap.keySet())
+            normalizedTermProbMap.put(termText, termProbAcrossDocMap.get(termText) / demoninator);
+
+        // Get n highest prob terms
+        List<String> sorted = normalizedTermProbMap.entrySet().stream()
+                .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
+                .limit(n)
+                .map(entry -> entry.getKey())
+                .collect(Collectors.toList());
+
+        // Expand query
+        String[] newQueryTerms = Stream.concat(Arrays.stream(queryTerms), sorted.stream())
+                .distinct()
+                .toArray(String[]::new);
+        if(debug)
+            System.out.println("New query: " + Arrays.toString(newQueryTerms));
+
+        // Recalculate queryProb
+        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, termProbMapCopy, topDocs.scoreDocs.length, reader, topDocs);
+
+        // Sort docs by new queryProb
+        ScoreDoc[] rankedDocs = newQueryProbMap.entrySet().stream()
+                .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
+                .map(entry -> {return new ScoreDoc(entry.getKey(), entry.getValue().floatValue());})
+                .toArray(ScoreDoc[]::new);
+
+        return rankedDocs;
     }
+
+    private static Map<Integer, Double> getQueryProbMap(String[] queryTerms, Map<String, HashMap<Integer , Double>> termProbMap,
+                                                       int k, IndexReader reader, TopDocs topDocs) throws IOException {
+        Map<Integer, Double> queryProbMap = new HashMap<>();
+        ScoreDoc[] hits = topDocs.scoreDocs;
+        for(int i = 0; i < k; ++i) {
+            double queryProb = 1;
+            Integer docId = hits[i].doc;
+
+            for(String queryTerm: queryTerms) {
+                queryTerm = queryTerm.split(":")[1];
+                double termProb = 1;
+                // Use unknown token prob if this query term not exists in current doc
+                try {
+                    termProb = termProbMap.get(queryTerm).get(docId);
+                } catch (Exception e) {
+                    termProb = termProbMap.get(unkownToken).get(docId);
+                }
+                queryProb *= termProb;
+            }
+            queryProbMap.put(docId, queryProb);
+        }
+        return queryProbMap;
+    }
+
     public static TopDocs doSearch(IndexSearcher searcher, Query query, int numRetrievedDocs) throws IOException {
         TopDocs topDocs = searcher.search(query, numRetrievedDocs);
 
