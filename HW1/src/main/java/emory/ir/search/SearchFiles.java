@@ -9,16 +9,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.List;
 
 import emory.ir.LMLaplace;
 import emory.ir.index.DocField;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.index.Terms;
+import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
 import org.apache.lucene.search.similarities.LMDirichletSimilarity;
@@ -80,7 +78,7 @@ public class SearchFiles {
 
         IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(index)));
         IndexSearcher searcher = new IndexSearcher(reader);
-        // searcher.setSimilarity(new LMDirichletSimilarity());
+        searcher.setSimilarity(new LMDirichletSimilarity());
         Analyzer analyzer = new StandardAnalyzer();
         QueryParser parser = new QueryParser(field, analyzer);
 
@@ -91,7 +89,9 @@ public class SearchFiles {
             System.out.println("Searching for: " + query.toString(field));
 
             TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);
-            printTopDocs(sb, searcher, topDocs, i + 351, userId);
+            // re-rank
+            topDocs = reRank(searcher, reader, query, topDocs);
+            //printTopDocs(sb, searcher, topDocs, i + 351, userId);
         }
         reader.close();
 
@@ -101,6 +101,27 @@ public class SearchFiles {
         writer.close();
     }
 
+    public static TopDocs reRank(IndexSearcher searcher,  IndexReader reader, Query query, TopDocs topDocs ) throws Exception{
+
+        ScoreDoc[] hits = topDocs.scoreDocs;
+        for(int i = 0; i < hits.length; ++i) {
+
+            String docNo = searcher.doc(hits[i].doc).get(DocField.DOC_NO);
+            Terms vec = reader.getTermVector(hits[i].doc, DocField.TEXT);
+            System.out.println("---- ReRANK: " + vec.size());
+
+            TermsEnum  terms = vec.iterator();
+
+            System.out.println( terms.attributes());
+
+            String content = searcher.doc(hits[i].doc).get(DocField.TEXT);
+            System.out.println("Content: " + content);
+
+
+        }
+
+        return topDocs;
+    }
     public static TopDocs doSearch(IndexSearcher searcher, Query query, int numRetrievedDocs) throws IOException {
         TopDocs topDocs = searcher.search(query, numRetrievedDocs);
 
