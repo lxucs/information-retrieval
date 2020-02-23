@@ -11,79 +11,49 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import emory.ir.LMLaplace;
+import java.lang.Math;
 import emory.ir.index.DocField;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.document.Document;
 import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.*;
 import org.apache.lucene.search.similarities.LMDirichletSimilarity;
-import org.apache.lucene.search.similarities.LMSimilarity;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.util.BytesRef;
 
 public class SearchFiles {
 
-    private static boolean debug = true;
+    private static boolean debug = false;
     private static String unkownToken = "#UNKNOWN#";
 
     private SearchFiles() {
     }
 
     public static void main(String[] args) throws Exception {
-        String usage =
-                "Usage:\t[-index dir] [-field f] [-queries file] [-query string] [-result string] [-num_retrieved_docs int]\n\n";
-        if (args.length > 0 && ("-h".equals(args[0]) || "-help".equals(args[0]))) {
-            System.out.println(usage);
-            System.exit(0);
-        }
+        String algorithm = args[0];
+        String index = args[1];
+        String queries = args[2];
+        String result = args[3];
 
-        String index = null;
         String field = DocField.TEXT;
-        String queries = null;
-        String queryString = null;
         int numRetrievedDocs = 1000;
-        String userId = "emory";
-        String result = null;
+        String userId = "lxu85 & tpsanto";
+        int rmK = 20, rmN = 40;  // Params for RM
+        double lambda = 0.5;  // Param for RM3
 
-        for (int i = 0; i < args.length; i++) {
-            if ("-index".equals(args[i])) {
-                index = args[i + 1];
-                i++;
-            } else if ("-field".equals(args[i])) {
-                field = args[i + 1];
-                i++;
-            } else if ("-queries".equals(args[i])) {
-                queries = args[i + 1];
-                i++;
-            } else if ("-query".equals(args[i])) {
-                queryString = args[i + 1];
-                i++;
-            } else if ("-result".equals(args[i])) {
-                result = args[i + 1];
-                i++;
-            } else if ("-num_retrieved_docs".equals(args[i])) {
-                numRetrievedDocs = Integer.parseInt(args[i + 1]);
-                i++;
-            }
-        }
+        assert algorithm.equalsIgnoreCase("BM25") || algorithm.equalsIgnoreCase("RM1")
+                || algorithm.equalsIgnoreCase("RM3") || algorithm.equalsIgnoreCase("LMLaplace");
 
         // Get queries
-        ArrayList<String> queryList = null;
-        if(queries != null)
-            queryList = parseQueries(Paths.get(queries));
-        else if(queryString != null) {
-            queryList = new ArrayList<>();
-            queryList.add(queryString);
-        }
-        // System.out.printf("Total %d queries\n\n", queryList.size());
+        ArrayList<String> queryList = parseQueries(Paths.get(queries));
+        if(debug)
+            System.out.printf("Total %d queries\n\n", queryList.size());
 
         IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(index)));
         IndexSearcher searcher = new IndexSearcher(reader);
-        searcher.setSimilarity(new LMDirichletSimilarity());
+        if(!algorithm.equalsIgnoreCase("BM25"))
+            searcher.setSimilarity(new LMDirichletSimilarity());
         Analyzer analyzer = new StandardAnalyzer();
         QueryParser parser = new QueryParser(field, analyzer);
 
@@ -93,8 +63,14 @@ public class SearchFiles {
             Query query = parser.parse(QueryParser.escape(queryList.get(i)));
             System.out.println("Searching for: " + query.toString(field));
 
-            TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);
-            topDocs.scoreDocs = reRank(reader, query, topDocs, 20, 50);
+            TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);  // BM25
+            if(algorithm.equalsIgnoreCase("RM1"))
+                topDocs.scoreDocs = reRank(reader, query, topDocs, rmK, rmN);  // RM1
+            else if(algorithm.equalsIgnoreCase("RM3"))
+                topDocs.scoreDocs = reRank(reader, query, topDocs, rmK, rmN, lambda);  // RM3
+            // String newQueryStr = reRank(reader, query, topDocs, 10, 10);
+            // Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
+            // topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // For debug
             printTopDocs(sb, searcher, topDocs, i + 351, userId);
         }
         reader.close();
@@ -103,13 +79,23 @@ public class SearchFiles {
         BufferedWriter writer = Files.newBufferedWriter(Paths.get(result));
         writer.write(sb.toString());
         writer.close();
+        System.out.println("Done");
     }
 
     /**
+     * RM1
      * @param k: use top k documents for expansion
      * @param n: use top n terms for expansion
      */
     public static ScoreDoc[] reRank(IndexReader reader, Query query, TopDocs topDocs, int k, int n) throws Exception{
+        return reRank(reader, query, topDocs, k, n, -1);
+    }
+
+    /**
+     * RM3
+     * @param lambda: > 0 for RM3 interpolation
+     */
+    public static ScoreDoc[] reRank(IndexReader reader, Query query, TopDocs topDocs, int k, int n, double lambda) throws Exception{
         ScoreDoc[] hits = topDocs.scoreDocs;
         assert k <= hits.length;
         String queryText = query.toString();
@@ -139,16 +125,9 @@ public class SearchFiles {
             }
             double unknownTokenProb = 1.0 / (docLen + numUniqueTokens + 1);
             // Add prob for unknown token for smoothing
-            if(i == 0) {
-                HashMap<Integer, Double> m = new HashMap<>();
-                m.put(docId, unknownTokenProb);
-                termProbMap.put(unkownToken, m);
-            } else
-                termProbMap.get(unkownToken).put(docId, unknownTokenProb);
+            termProbMap.putIfAbsent(unkownToken, new HashMap<>());
+            termProbMap.get(unkownToken).put(docId, unknownTokenProb);
         }
-        // Copy for later use
-        Map<String, HashMap<Integer , Double>> termProbMapCopy = termProbMap.entrySet().stream()
-                .collect(Collectors.toMap(e -> e.getKey(), e -> e.getValue()));
 
         // Calculate p(q|D)
         String[] queryTerms = queryText.split("\\s+");
@@ -157,6 +136,7 @@ public class SearchFiles {
         Map<Integer, Double> queryProbMap = getQueryProbMap(queryTerms, termProbMap, k, topDocs);
 
         // Re-weight term per document
+        Map<String, HashMap<Integer , Double>> reweightedTermProbMap = new HashMap<>();
         for(int i = 0; i < k; ++i) {
             Integer docId = hits[i].doc;
             Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
@@ -164,26 +144,29 @@ public class SearchFiles {
             BytesRef term = null;
             while((term = terms.next()) != null) {
                 String termText = term.utf8ToString();
+                reweightedTermProbMap.putIfAbsent(termText, new HashMap<>());
+
                 double termProb = termProbMap.get(termText).get(docId);
                 double newTermProb = termProb * queryProbMap.get(docId);
-                termProbMap.get(termText).put(docId, newTermProb);
+                reweightedTermProbMap.get(termText).put(docId, newTermProb);
                 if(debug)
                     System.out.println(String.format("term: %s, newTermProb: %e", termText, newTermProb));
             }
             double termProb = termProbMap.get(unkownToken).get(docId);
             double newTermProb = termProb * queryProbMap.get(docId);
-            termProbMap.get(unkownToken).put(docId, newTermProb);
+            reweightedTermProbMap.putIfAbsent(unkownToken, new HashMap<>());
+            reweightedTermProbMap.get(unkownToken).put(docId, newTermProb);
         }
 
         // Get term prob across documents
         Map<String, Double> termProbAcrossDocMap = new HashMap<>();
-        termProbMap.forEach((termText, docMap) -> {
+        reweightedTermProbMap.forEach((termText, docMap) -> {
             try {
                 double termProbAcrossDoc = 0;
                 for(int i = 0; i < k; ++i) {
                     Integer docId = hits[i].doc;
                     // Use unknown token prob if this query term not exists in current doc
-                    termProbAcrossDoc += docMap.getOrDefault(docId, termProbMap.get(unkownToken).get(docId));
+                    termProbAcrossDoc += docMap.getOrDefault(docId, reweightedTermProbMap.get(unkownToken).get(docId));
                 }
                 termProbAcrossDocMap.put(termText, termProbAcrossDoc);
                 if(debug)
@@ -201,6 +184,26 @@ public class SearchFiles {
         for(String termText: termProbAcrossDocMap.keySet())
             normalizedTermProbMap.put(termText, termProbAcrossDocMap.get(termText) / demoninator);
 
+        // Interpolation
+        Map<String, Double> originalQueryLM = new HashMap<>();
+        if(lambda > 0) {
+            int queryLen = queryTerms.length;
+            Map<String, Integer> queryTermFreq = new HashMap<>();
+            Arrays.stream(queryTerms).forEach(queryTerm -> {
+                queryTermFreq.put(queryTerm, queryTermFreq.getOrDefault(queryTerm, 0) + 1);
+            });
+
+            queryTermFreq.entrySet().forEach(entry -> {
+                originalQueryLM.put(entry.getKey(), entry.getValue() / (double)queryLen);  // No smoothing here
+            });
+
+            double coefMle = 1 - lambda, coefRm1 = lambda;
+            originalQueryLM.entrySet().forEach(entry -> {
+                double newProb = coefMle * entry.getValue() + coefRm1 * normalizedTermProbMap.getOrDefault(entry.getKey(), normalizedTermProbMap.get(unkownToken));
+                normalizedTermProbMap.put(entry.getKey(), newProb);
+            });
+        }
+
         // Get n highest prob terms
         List<String> sorted = normalizedTermProbMap.entrySet().stream()
                 .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
@@ -216,12 +219,16 @@ public class SearchFiles {
             System.out.println("New query: " + Arrays.toString(newQueryTerms));
 
         // Recalculate queryProb
-        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, termProbMapCopy, topDocs.scoreDocs.length, topDocs);
+        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, termProbMap, topDocs.scoreDocs.length, topDocs);
 
         // Sort docs by new queryProb
+        int numQueryTerms = newQueryTerms.length;
         ScoreDoc[] rankedDocs = newQueryProbMap.entrySet().stream()
                 .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
-                .map(entry -> {return new ScoreDoc(entry.getKey(), entry.getValue().floatValue());})
+                .map(entry -> {
+                    float newProb = (float)Math.pow(entry.getValue(), 1.0 / numQueryTerms);  // Normalize prob
+                    // System.out.println("newProb: " + newProb);
+                    return new ScoreDoc(entry.getKey(), newProb);})
                 .toArray(ScoreDoc[]::new);
 
         return rankedDocs;
@@ -263,7 +270,7 @@ public class SearchFiles {
         ScoreDoc[] hits = topDocs.scoreDocs;
         for(int i = 0; i < hits.length; ++i) {
             String docNo = searcher.doc(hits[i].doc).get(DocField.DOC_NO);
-            String str = String.format("%d \t Q0 \t %s \t %d \t %.1f \t %s\n", queryId, docNo, i + 1, hits[i].score, userId);
+            String str = String.format("%d \t Q0 \t %s \t %d \t %.4f \t %s\n", queryId, docNo, i + 1, hits[i].score, userId);
             // System.out.print(str);
             sb.append(str);
         }
@@ -292,7 +299,7 @@ public class SearchFiles {
                     if(line.trim().isEmpty() || line.startsWith("<"))
                         break;
                     else
-                        sb.append(line);
+                        sb.append(line + " ");
                 }
                 String description = sb.toString();
 

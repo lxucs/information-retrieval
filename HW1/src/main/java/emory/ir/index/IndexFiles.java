@@ -8,7 +8,6 @@ import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexWriterConfig.OpenMode;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.similarities.LMDirichletSimilarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.w3c.dom.Node;
@@ -75,7 +74,7 @@ public class IndexFiles {
             Directory dir = FSDirectory.open(Paths.get(indexPath));
             Analyzer analyzer = new StandardAnalyzer();
             IndexWriterConfig iwc = new IndexWriterConfig(analyzer);
-            iwc.setSimilarity(new LMDirichletSimilarity());
+            // iwc.setSimilarity(new LMDirichletSimilarity());
 
             if (create) {
                 // Create a new index in the directory, removing any
@@ -146,7 +145,7 @@ public class IndexFiles {
                     sb.append(line);
                     while(true) {
                         line = reader.readLine();
-                        if(line.contains("<F P=") || line.contains("</F>"))  // Filter out invalid format
+                        if(line.contains("<F P=") || line.contains("</F>") || line.contains("<FIG") || line.contains("</FIG>"))  // Filter out invalid format
                             continue;
                         sb.append(line);
                         if(line.trim().equals("</DOC>")) {

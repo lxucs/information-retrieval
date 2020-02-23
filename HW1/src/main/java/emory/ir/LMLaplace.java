@@ -32,7 +32,7 @@ public class LMLaplace extends LMSimilarity {
             return freq / docLen;
         } else {
             // With smoothing
-            return (freq + 1) / (docLen + vocabSize);
+            return (freq + 1) / (docLen + vocabSize + 1);
         }
     }
 }
