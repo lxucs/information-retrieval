@@ -25,6 +25,7 @@
 # Ranking Methods  Implementation
 
 	1) BM25
+	
 		This is the most basic model, without any modification from the demo provided by Lucene. It's a very strong baseline and we got reasonable results(More details on the results section)
 
 	2) LM similarity model
