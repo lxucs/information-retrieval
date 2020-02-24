@@ -27,6 +27,13 @@ public class SearchFiles {
     private static boolean debug = false;
     private static String unkownToken = "#UNKNOWN#";
 
+    private static String field = DocField.TEXT;
+    private static int numRetrievedDocs = 1000;
+    private static String userId = "lxu85 & tpsanto";
+    private static int rmK = 25, rmN = 50;  // Params for RM
+    private static double lambda = 0.8;  // Param for RM3
+    private static double mu = 2000;  // Dirichlet
+
     private SearchFiles() {
     }
 
@@ -47,16 +54,6 @@ public class SearchFiles {
         String queries = args[2];
         String result = args[3];
 
-        String[] resul_split = result.split("\\.");
-
-        result = resul_split[0] + "_" + algorithm + "." + resul_split[1];
-
-        String field = DocField.TEXT;
-        int numRetrievedDocs = 1000;
-        String userId = "lxu85 & tpsanto";
-        int rmK = 25, rmN = 50;  // Params for RM
-        double lambda = 0.8;  // Param for RM3
-
         assert algorithm.equalsIgnoreCase("BM25") || algorithm.equalsIgnoreCase("RM1")
                 || algorithm.equalsIgnoreCase("RM3") || algorithm.equalsIgnoreCase("LMLaplace");
 
@@ -68,7 +65,7 @@ public class SearchFiles {
         IndexReader reader = DirectoryReader.open(FSDirectory.open(Paths.get(index)));
         IndexSearcher searcher = new IndexSearcher(reader);
         if(!algorithm.equalsIgnoreCase("BM25"))
-            searcher.setSimilarity(new LMDirichletSimilarity());
+            searcher.setSimilarity(new LMDirichletSimilarity((float)mu));
         Analyzer analyzer = new StandardAnalyzer();
         QueryParser parser = new QueryParser(field, analyzer);
 
@@ -115,44 +112,19 @@ public class SearchFiles {
         ScoreDoc[] hits = topDocs.scoreDocs;
         assert k <= hits.length;
         String queryText = query.toString();
-        Map<String, HashMap<Integer , Double>> termProbMap = new HashMap<>();  // (term, docId) -> prob
 
-        // Build up termProbMap
-        for(int i = 0; i < hits.length; ++i) {
-            Integer docId = hits[i].doc;
-            Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
-            long docLen = termVec.getSumTotalTermFreq();
-            long numUniqueTokens = termVec.size();
-
-            TermsEnum terms = termVec.iterator();
-            BytesRef term = null;
-            while((term = terms.next()) != null) {
-                String termText = term.utf8ToString();
-                termProbMap.putIfAbsent(termText, new HashMap<>());
-
-                PostingsEnum posting = terms.postings(null, PostingsEnum.FREQS);
-                posting.nextDoc();
-                int termFreq = posting.freq();
-                double termProb = (termFreq + 1.0) / (docLen + numUniqueTokens + 1);  // Term Prob
-                termProbMap.get(termText).put(docId, termProb);
-                if(debug)
-                    System.out.println(String.format("term: %s, docLen: %d, numUniqueTokens: %d, termFreq: %d; termProb: %e",
-                            termText, docLen, numUniqueTokens, termFreq, termProb));
-            }
-            double unknownTokenProb = 1.0 / (docLen + numUniqueTokens + 1);
-            // Add prob for unknown token for smoothing
-            termProbMap.putIfAbsent(unkownToken, new HashMap<>());
-            termProbMap.get(unkownToken).put(docId, unknownTokenProb);
-        }
+        // Build up DirichletLMProb
+        LMDirichletProbability lmDirichletProbability = new LMDirichletProbability(mu);
+        lmDirichletProbability.initializeProb(reader, topDocs);
 
         // Calculate p(q|D)
         String[] queryTerms = queryText.split("\\s+");
         for(int i = 0; i < queryTerms.length; ++i)
             queryTerms[i] = queryTerms[i].split(":")[1];
-        Map<Integer, Double> queryProbMap = getQueryProbMap(queryTerms, termProbMap, k, topDocs);
+        Map<Integer, Double> queryProbMap = getQueryProbMap(queryTerms, lmDirichletProbability, k, topDocs);
 
-        // Re-weight term per document
-        Map<String, HashMap<Integer , Double>> reweightedTermProbMap = new HashMap<>();
+        // Collect all terms in top docs
+        Set<String> termsInTopDocs = new TreeSet<>();
         for(int i = 0; i < k; ++i) {
             Integer docId = hits[i].doc;
             Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
@@ -160,29 +132,19 @@ public class SearchFiles {
             BytesRef term = null;
             while((term = terms.next()) != null) {
                 String termText = term.utf8ToString();
-                reweightedTermProbMap.putIfAbsent(termText, new HashMap<>());
-
-                double termProb = termProbMap.get(termText).get(docId);
-                double newTermProb = termProb * queryProbMap.get(docId);
-                reweightedTermProbMap.get(termText).put(docId, newTermProb);
-                if(debug)
-                    System.out.println(String.format("term: %s, newTermProb: %e", termText, newTermProb));
+                termsInTopDocs.add(termText);
             }
-            double termProb = termProbMap.get(unkownToken).get(docId);
-            double newTermProb = termProb * queryProbMap.get(docId);
-            reweightedTermProbMap.putIfAbsent(unkownToken, new HashMap<>());
-            reweightedTermProbMap.get(unkownToken).put(docId, newTermProb);
         }
 
-        // Get term prob across documents
+        // Get term prob across documents using reweighted term prob
         Map<String, Double> termProbAcrossDocMap = new HashMap<>();
-        reweightedTermProbMap.forEach((termText, docMap) -> {
+        termsInTopDocs.forEach(termText -> {
             try {
                 double termProbAcrossDoc = 0;
                 for(int i = 0; i < k; ++i) {
                     Integer docId = hits[i].doc;
-                    // Use unknown token prob if this query term not exists in current doc
-                    termProbAcrossDoc += docMap.getOrDefault(docId, reweightedTermProbMap.get(unkownToken).get(docId));
+                    double reweightedTermProb = lmDirichletProbability.getProb(termText, docId) * queryProbMap.get(docId);
+                    termProbAcrossDoc += reweightedTermProb;
                 }
                 termProbAcrossDocMap.put(termText, termProbAcrossDoc);
                 if(debug)
@@ -236,7 +198,7 @@ public class SearchFiles {
             System.out.println("New query: " + Arrays.toString(newQueryTerms));
 
         // Recalculate queryProb
-        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, termProbMap, topDocs.scoreDocs.length, topDocs);
+        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, lmDirichletProbability, topDocs.scoreDocs.length, topDocs);
 
         // Sort docs by new queryProb
         int numQueryTerms = newQueryTerms.length;
@@ -251,8 +213,8 @@ public class SearchFiles {
         return rankedDocs;
     }
 
-    private static Map<Integer, Double> getQueryProbMap(String[] queryTerms, Map<String, HashMap<Integer , Double>> termProbMap,
-                                                       int k, TopDocs topDocs) throws IOException {
+    private static Map<Integer, Double> getQueryProbMap(String[] queryTerms, LMDirichletProbability lmDirichletProbability,
+                                                       int k, TopDocs topDocs){
         Map<Integer, Double> queryProbMap = new HashMap<>();
         ScoreDoc[] hits = topDocs.scoreDocs;
         for(int i = 0; i < k; ++i) {
@@ -261,12 +223,7 @@ public class SearchFiles {
 
             for(String queryTerm: queryTerms) {
                 double termProb = 1;
-                // Use unknown token prob if this query term not exists in current doc
-                try {
-                    termProb = termProbMap.get(queryTerm).get(docId);
-                } catch (Exception e) {
-                    termProb = termProbMap.get(unkownToken).get(docId);
-                }
+                termProb = lmDirichletProbability.getProb(queryTerm, docId);
                 queryProb *= termProb;
             }
             queryProbMap.put(docId, queryProb);
