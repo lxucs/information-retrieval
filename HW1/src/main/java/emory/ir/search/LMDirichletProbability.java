@@ -14,19 +14,20 @@ public class LMDirichletProbability {
     private double mu;
     private Map<Integer, Integer> docLenMap = null;
     private Map<String, Double> termGlobalProbMap = null;
-    private Map<String, HashMap<Integer , Double>> termProbMap = null;  // (term, docId) -> prob
+    private Map<String, HashMap<Integer, Double>> termProbMap = null;  // (term, docId) -> prob
 
     private boolean debug = false;
+    private Double unseenTermProb = 2e-5;
 
     public LMDirichletProbability(double mu) {this.mu = mu;}
 
-    public void initializeProb(IndexReader reader, TopDocs topDocs) throws Exception {
+    public void initializeProb(IndexReader reader, ScoreDoc[] hits) throws Exception {
         docLenMap = new HashMap<>();
         termGlobalProbMap = new HashMap<>();
-        termProbMap = new HashMap<>();  // (term, docId) -> prob
+        termProbMap = new HashMap<>();
         long numAllTokensAcrossDocs = reader.getSumTotalTermFreq(DocField.TEXT);
 
-        ScoreDoc[] hits = topDocs.scoreDocs;
+        // Calculate term prob
         for(int i = 0; i < hits.length; ++i) {
             Integer docId = hits[i].doc;
             Terms termVec = reader.getTermVector(hits[i].doc, DocField.TEXT);
@@ -59,11 +60,11 @@ public class LMDirichletProbability {
         }
     }
 
-    public double getProb(String termText, int docId) {
+    public double getTermProb(String termText, int docId) {
         Map<Integer, Double> docMap = termProbMap.getOrDefault(termText, null);
         if(docMap == null) {
             // Unseen word w.r.t the whole collection
-            return 2e-5;
+            return unseenTermProb;
         } else {
             double prob = docMap.getOrDefault(docId, -1D);
             if(prob < 0) {
@@ -72,6 +73,28 @@ public class LMDirichletProbability {
             } else {
                 return docMap.get(docId);
             }
+        }
+    }
+
+    /**
+     * Get marginal prob of the term across top k document.
+     */
+    public double getTermProbSumAcrossDocs(String termText, ScoreDoc[] hits, int k) {
+        Map<Integer, Double> docMap = termProbMap.getOrDefault(termText, null);
+        if(docMap == null) {
+            return unseenTermProb * hits.length;
+        } else {
+            double probSum = 0;
+            double globalProb = termGlobalProbMap.get(termText);
+            for(int i = 0; i < k; ++i) {
+                Integer docId = hits[i].doc;
+                double prob = docMap.getOrDefault(docId, -1D);
+                if(prob < 0)
+                    probSum += (mu * globalProb) / (docLenMap.get(docId) + mu);
+                else
+                    probSum += prob;
+            }
+            return probSum;
         }
     }
 

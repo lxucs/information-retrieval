@@ -25,13 +25,12 @@ import org.apache.lucene.util.BytesRef;
 public class SearchFiles {
 
     private static boolean debug = false;
-    private static String unkownToken = "#UNKNOWN#";
 
     private static String field = DocField.TEXT;
     private static int numRetrievedDocs = 1000;
     private static String userId = "lxu85 & tpsanto";
-    private static int rmK = 25, rmN = 50;  // Params for RM
-    private static double lambda = 0.8;  // Param for RM3
+    private static int rmK = 50, rmN = 70;  // Params for RM
+    private static double lambda = 0.75;  // Param for RM3
     private static double mu = 2000;  // Dirichlet
 
     private SearchFiles() {
@@ -113,9 +112,9 @@ public class SearchFiles {
         assert k <= hits.length;
         String queryText = query.toString();
 
-        // Build up DirichletLMProb
+        // Build up lmDirichletProbability
         LMDirichletProbability lmDirichletProbability = new LMDirichletProbability(mu);
-        lmDirichletProbability.initializeProb(reader, topDocs);
+        lmDirichletProbability.initializeProb(reader, hits);
 
         // Calculate p(q|D)
         String[] queryTerms = queryText.split("\\s+");
@@ -140,12 +139,7 @@ public class SearchFiles {
         Map<String, Double> termProbAcrossDocMap = new HashMap<>();
         termsInTopDocs.forEach(termText -> {
             try {
-                double termProbAcrossDoc = 0;
-                for(int i = 0; i < k; ++i) {
-                    Integer docId = hits[i].doc;
-                    double reweightedTermProb = lmDirichletProbability.getProb(termText, docId) * queryProbMap.get(docId);
-                    termProbAcrossDoc += reweightedTermProb;
-                }
+                double termProbAcrossDoc = lmDirichletProbability.getTermProbSumAcrossDocs(termText, hits, k);
                 termProbAcrossDocMap.put(termText, termProbAcrossDoc);
                 if(debug)
                     System.out.println(String.format("term: %s, termProbAcrossDoc: %e", termText, termProbAcrossDoc));
@@ -177,7 +171,7 @@ public class SearchFiles {
 
             double coefMle = 1 - lambda, coefRm1 = lambda;
             originalQueryLM.entrySet().forEach(entry -> {
-                double newProb = coefMle * entry.getValue() + coefRm1 * normalizedTermProbMap.getOrDefault(entry.getKey(), normalizedTermProbMap.get(unkownToken));
+                double newProb = coefMle * entry.getValue() + coefRm1 * normalizedTermProbMap.getOrDefault(entry.getKey(), 0D);
                 normalizedTermProbMap.put(entry.getKey(), newProb);
             });
         }
@@ -192,13 +186,13 @@ public class SearchFiles {
 
         // Expand query
         String[] newQueryTerms = Stream.concat(Arrays.stream(queryTerms), sorted.stream())
-                .distinct()
+                // .distinct()
                 .toArray(String[]::new);
         if(debug)
             System.out.println("New query: " + Arrays.toString(newQueryTerms));
 
         // Recalculate queryProb
-        Map<Integer, Double> newQueryProbMap = getQueryProbMap(newQueryTerms, lmDirichletProbability, topDocs.scoreDocs.length, topDocs);
+        Map<Integer, Double> newQueryProbMap = getQueryProbMap(queryTerms, lmDirichletProbability, topDocs.scoreDocs.length, topDocs);
 
         // Sort docs by new queryProb
         int numQueryTerms = newQueryTerms.length;
@@ -223,7 +217,7 @@ public class SearchFiles {
 
             for(String queryTerm: queryTerms) {
                 double termProb = 1;
-                termProb = lmDirichletProbability.getProb(queryTerm, docId);
+                termProb = lmDirichletProbability.getTermProb(queryTerm, docId);
                 queryProb *= termProb;
             }
             queryProbMap.put(docId, queryProb);
