@@ -31,10 +31,25 @@ public class SearchFiles {
     }
 
     public static void main(String[] args) throws Exception {
+
+        String usage = "Usage: [algorithm --> BM25, LMLaplace, RM1 or RM3]\n" +
+                       "       [Index Files --> Absolute Path to index folder]\n" +
+                       "       [Queries --> Absolute Path to queries file]\n" +
+                       "       [Results --> Absolute Path to file where you want to have the results saved]\n";
+
+        if(args.length < 4){
+            System.out.println(usage);
+            System.exit(0);
+        }
+
         String algorithm = args[0];
         String index = args[1];
         String queries = args[2];
         String result = args[3];
+
+        String[] resul_split = result.split("\\.");
+
+        result = resul_split[0] + "_" + algorithm + "." + resul_split[1];
 
         String field = DocField.TEXT;
         int numRetrievedDocs = 1000;
