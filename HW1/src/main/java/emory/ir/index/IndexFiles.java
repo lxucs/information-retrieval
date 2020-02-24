@@ -1,6 +1,8 @@
 package emory.ir.index;
 
+import emory.ir.search.Util;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.*;
 import org.apache.lucene.index.IndexOptions;
@@ -22,6 +24,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
 import java.util.Date;
 
 /**
@@ -73,7 +76,7 @@ public class IndexFiles {
             System.out.println("Indexing to directory '" + indexPath + "'...");
 
             Directory dir = FSDirectory.open(Paths.get(indexPath));
-            Analyzer analyzer = new StandardAnalyzer();
+            Analyzer analyzer = new StandardAnalyzer(new CharArraySet(Arrays.asList(Util.getStopWords()), true));
             IndexWriterConfig iwc = new IndexWriterConfig(analyzer);
             iwc.setSimilarity(new LMDirichletSimilarity());
 
@@ -115,7 +118,8 @@ public class IndexFiles {
                     try {
                         indexDocs(writer, file);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        // e.printStackTrace();
+                        System.out.println("Skip");
                     }
                     return FileVisitResult.CONTINUE;
                 }

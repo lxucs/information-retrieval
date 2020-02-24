@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 import java.lang.Math;
 import emory.ir.index.DocField;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.QueryParser;
@@ -29,7 +30,7 @@ public class SearchFiles {
     private static String field = DocField.TEXT;
     private static int numRetrievedDocs = 1000;
     private static String userId = "lxu85 & tpsanto";
-    private static int rmK = 50, rmN = 70;  // Params for RM
+    private static int rmK = 35, rmN = 70;  // Params for RM
     private static double lambda = 0.75;  // Param for RM3
     private static double mu = 2000;  // Dirichlet
 
@@ -65,7 +66,7 @@ public class SearchFiles {
         IndexSearcher searcher = new IndexSearcher(reader);
         if(!algorithm.equalsIgnoreCase("BM25"))
             searcher.setSimilarity(new LMDirichletSimilarity((float)mu));
-        Analyzer analyzer = new StandardAnalyzer();
+        Analyzer analyzer = new StandardAnalyzer(new CharArraySet(Arrays.asList(Util.getStopWords()), true));
         QueryParser parser = new QueryParser(field, analyzer);
 
         // Search for each query
@@ -81,7 +82,7 @@ public class SearchFiles {
                 topDocs.scoreDocs = reRank(reader, query, topDocs, rmK, rmN, lambda);  // RM3
 //             String newQueryStr = reRank(reader, query, topDocs, rmK , rmN, lambda);
 //             Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
-//             topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // For debug
+//             topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // Re-search for debug
             printTopDocs(sb, searcher, topDocs, i + 351, userId);
         }
         reader.close();
@@ -177,18 +178,25 @@ public class SearchFiles {
         }
         // End of Interpolation - RM3
 
-        // Get n highest prob terms
-        List<String> sorted = normalizedTermProbMap.entrySet().stream()
+        // Sort terms by prob
+        Stream<String> sortedStream = normalizedTermProbMap.entrySet().stream()
                 .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
+                .map(entry -> entry.getKey());
+
+        // Remove stop words
+        Set<String> stopWords = new HashSet<>(Arrays.asList(Util.getStopWords()));
+        List<String> sorted = sortedStream
+                .filter(term -> !stopWords.contains(term))
                 .limit(n)
-                .map(entry -> entry.getKey())
                 .collect(Collectors.toList());
 
         // Expand query
-        String[] newQueryTerms = Stream.concat(Arrays.stream(queryTerms), sorted.stream())
-                // .distinct()
+        Set<String> queryTermsSet = new HashSet<>(Arrays.asList(queryTerms));
+        String[] newQueryTerms = Stream.concat(
+                Arrays.stream(queryTerms),
+                sorted.stream().filter(term -> !queryTermsSet.contains(term)))
                 .toArray(String[]::new);
-        if(debug)
+        if(true)
             System.out.println("New query: " + Arrays.toString(newQueryTerms));
 
         // Recalculate queryProb

@@ -3,7 +3,6 @@ package emory.ir.search;
 import emory.ir.index.DocField;
 import org.apache.lucene.index.*;
 import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.BytesRef;
 
 import java.util.HashMap;
@@ -48,6 +47,7 @@ public class LMDirichletProbability {
                     termGlobalProbMap.put(termText, globalTermProb);
                 }
 
+                // Get dirichlet smoothing prob
                 PostingsEnum posting = terms.postings(null, PostingsEnum.FREQS);
                 posting.nextDoc();
                 int termFreq = posting.freq();
