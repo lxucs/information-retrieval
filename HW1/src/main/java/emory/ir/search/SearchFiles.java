@@ -54,8 +54,8 @@ public class SearchFiles {
         String field = DocField.TEXT;
         int numRetrievedDocs = 1000;
         String userId = "lxu85 & tpsanto";
-        int rmK = 20, rmN = 40;  // Params for RM
-        double lambda = 0.5;  // Param for RM3
+        int rmK = 25, rmN = 50;  // Params for RM
+        double lambda = 0.8;  // Param for RM3
 
         assert algorithm.equalsIgnoreCase("BM25") || algorithm.equalsIgnoreCase("RM1")
                 || algorithm.equalsIgnoreCase("RM3") || algorithm.equalsIgnoreCase("LMLaplace");
@@ -83,9 +83,9 @@ public class SearchFiles {
                 topDocs.scoreDocs = reRank(reader, query, topDocs, rmK, rmN);  // RM1
             else if(algorithm.equalsIgnoreCase("RM3"))
                 topDocs.scoreDocs = reRank(reader, query, topDocs, rmK, rmN, lambda);  // RM3
-            // String newQueryStr = reRank(reader, query, topDocs, 10, 10);
-            // Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
-            // topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // For debug
+//             String newQueryStr = reRank(reader, query, topDocs, rmK , rmN, lambda);
+//             Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
+//             topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // For debug
             printTopDocs(sb, searcher, topDocs, i + 351, userId);
         }
         reader.close();
@@ -99,8 +99,9 @@ public class SearchFiles {
 
     /**
      * RM1
-     * @param k: use top k documents for expansion
-     * @param n: use top n terms for expansion
+     * @param k : use top k documents for expansion
+     * @param n : use top n terms for expansion
+     * @return
      */
     public static ScoreDoc[] reRank(IndexReader reader, Query query, TopDocs topDocs, int k, int n) throws Exception{
         return reRank(reader, query, topDocs, k, n, -1);
@@ -199,7 +200,7 @@ public class SearchFiles {
         for(String termText: termProbAcrossDocMap.keySet())
             normalizedTermProbMap.put(termText, termProbAcrossDocMap.get(termText) / demoninator);
 
-        // Interpolation
+        // Interpolation - RM3
         Map<String, Double> originalQueryLM = new HashMap<>();
         if(lambda > 0) {
             int queryLen = queryTerms.length;
@@ -218,6 +219,7 @@ public class SearchFiles {
                 normalizedTermProbMap.put(entry.getKey(), newProb);
             });
         }
+        // End of Interpolation - RM3
 
         // Get n highest prob terms
         List<String> sorted = normalizedTermProbMap.entrySet().stream()
@@ -241,11 +243,11 @@ public class SearchFiles {
         ScoreDoc[] rankedDocs = newQueryProbMap.entrySet().stream()
                 .sorted(Collections.reverseOrder(Map.Entry.comparingByValue()))
                 .map(entry -> {
-                    float newProb = (float)Math.pow(entry.getValue(), 1.0 / numQueryTerms);  // Normalize prob
+                    float newProb = (float)Math.pow(entry.getValue(), 1.0 / numQueryTerms) ;  // Normalize prob
                     // System.out.println("newProb: " + newProb);
                     return new ScoreDoc(entry.getKey(), newProb);})
                 .toArray(ScoreDoc[]::new);
-
+        //return Arrays.toString(newQueryTerms);
         return rankedDocs;
     }
 
