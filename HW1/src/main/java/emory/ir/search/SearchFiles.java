@@ -83,7 +83,7 @@ public class SearchFiles {
 //             String newQueryStr = reRank(reader, query, topDocs, rmK , rmN, lambda);
 //             Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
 //             topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // Re-search for debug
-            printTopDocs(sb, searcher, topDocs, i + 351, userId);
+            printTopDocs(sb, searcher, topDocs, i, userId);
         }
         reader.close();
 
