@@ -37,12 +37,12 @@ public class SearchFiles {
     private SearchFiles() {
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void run(String[] args) throws Exception {
 
-        String usage = "Usage: [algorithm --> BM25, LMLaplace, RM1 or RM3]\n" +
+        String usage = "Usage: [Algorithm --> BM25, LMLaplace, RM1, RM3]\n" +
                        "       [Index Files --> Absolute Path to index folder]\n" +
                        "       [Queries --> Absolute Path to queries file]\n" +
-                       "       [Results --> Absolute Path to file where you want to have the results saved]\n";
+                       "       [Results --> Absolute Path to file where you want to have the results saved]";
 
         if(args.length < 4){
             System.out.println(usage);
@@ -58,7 +58,7 @@ public class SearchFiles {
                 || algorithm.equalsIgnoreCase("RM3") || algorithm.equalsIgnoreCase("LMLaplace");
 
         // Get queries
-        ArrayList<String> queryList = parseQueries(Paths.get(queries));
+        ArrayList<QueryField> queryList = parseQueries(Paths.get(queries));
         if(debug)
             System.out.printf("Total %d queries\n\n", queryList.size());
 
@@ -72,7 +72,7 @@ public class SearchFiles {
         // Search for each query
         StringBuilder sb = new StringBuilder();
         for(int i = 0; i < queryList.size(); ++i) {
-            Query query = parser.parse(QueryParser.escape(queryList.get(i)));
+            Query query = parser.parse(QueryParser.escape(queryList.get(i).getText()));
             System.out.println("Searching for: " + query.toString(field));
 
             TopDocs topDocs = doSearch(searcher, query, numRetrievedDocs);  // BM25
@@ -83,7 +83,7 @@ public class SearchFiles {
 //             String newQueryStr = reRank(reader, query, topDocs, rmK , rmN, lambda);
 //             Query newQuery = parser.parse(QueryParser.escape(newQueryStr));
 //             topDocs = doSearch(searcher, newQuery, numRetrievedDocs);  // Re-search for debug
-            printTopDocs(sb, searcher, topDocs, i + 1, userId);
+            printTopDocs(sb, searcher, topDocs, queryList.get(i).getNum(), userId);
         }
         reader.close();
 
@@ -252,8 +252,8 @@ public class SearchFiles {
         }
     }
 
-    public static ArrayList<String> parseQueries(Path file) {
-        ArrayList<String> queries = new ArrayList<>();
+    public static ArrayList<QueryField> parseQueries(Path file) {
+        ArrayList<QueryField> queries = new ArrayList<>();
         try(BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             String line = null;
             while ((line = reader.readLine()) != null) {
@@ -262,6 +262,9 @@ public class SearchFiles {
                 // New topic/query
                 line = reader.readLine();
                 line = reader.readLine();
+                assert line.startsWith("<num>"): "Wrong parsing for num";
+                int num = Integer.parseInt(line.split(":")[1].trim());
+
                 line = reader.readLine();
                 assert line.startsWith("<title>"): "Wrong parsing for title";
                 String title = line.substring(8, line.length()).trim();
@@ -279,8 +282,11 @@ public class SearchFiles {
                 }
                 String description = sb.toString();
 
-                String query = title + " " + description;
-                queries.add(query);
+                String text = title + " " + description;
+                queries.add(QueryField.builder()
+                        .num(num)
+                        .text(text)
+                        .build());
             }
         } catch (Exception e) {
             e.printStackTrace();

@@ -27,12 +27,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.Date;
 
-/**
- * Index all text files under a directory.
- * <p>
- * This is a command-line application demonstrating simple Lucene indexing.
- * Run it with no command-line arguments for usage information.
- */
+
 public class IndexFiles {
 
     private IndexFiles() {
@@ -41,29 +36,22 @@ public class IndexFiles {
     /**
      * Index all text files under a directory.
      */
-    public static void main(String[] args) {
-        String usage = "Usage: [-index INDEX_PATH] [-docs DOCS_PATH] [-update]\n\n"
-                + "This indexes the documents in DOCS_PATH, creating a Lucene index"
-                + "in INDEX_PATH that can be searched with SearchFiles";
-        String indexPath = "index";
-        String docsPath = null;
-        boolean create = true;
-        for (int i = 0; i < args.length; i++) {
-            if ("-index".equals(args[i])) {
-                indexPath = args[i + 1];
-                i++;
-            } else if ("-docs".equals(args[i])) {
-                docsPath = args[i + 1];
-                i++;
-            } else if ("-update".equals(args[i])) {
-                create = false;
-            }
+    public static void run(String[] args) {
+        String usage = "Usage: indexing\n" +
+                "       [Similarity --> BM25 or LM]\n" +
+                "       [Doc Dir --> Absolute Path to data folder]\n" +
+                "       [Index Dir --> Absolute Path to index folder to be stored]";
+
+        if(args.length < 4 || !args[0].equalsIgnoreCase("indexing")
+                || (!args[1].equalsIgnoreCase("BM25") && !args[1].equalsIgnoreCase("LM"))){
+            System.out.println(usage);
+            System.exit(0);
         }
 
-        if (docsPath == null) {
-            System.err.println("Usage: " + usage);
-            System.exit(1);
-        }
+        String similarity = args[1];
+        String docsPath = args[2];
+        String indexPath = args[3];
+        boolean create = true;
 
         final Path docDir = Paths.get(docsPath);
         if (!Files.isReadable(docDir)) {
@@ -78,7 +66,8 @@ public class IndexFiles {
             Directory dir = FSDirectory.open(Paths.get(indexPath));
             Analyzer analyzer = new StandardAnalyzer(new CharArraySet(Arrays.asList(Util.getStopWords()), true));
             IndexWriterConfig iwc = new IndexWriterConfig(analyzer);
-            iwc.setSimilarity(new LMDirichletSimilarity());
+            if(similarity.equalsIgnoreCase("LM"))
+                iwc.setSimilarity(new LMDirichletSimilarity());
 
             if (create) {
                 // Create a new index in the directory, removing any
